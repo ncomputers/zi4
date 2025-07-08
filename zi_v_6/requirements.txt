@@ -6,3 +6,4 @@ loguru
 ultralytics
 deep-sort-realtime
 redis
+python-multipart

@@ -124,7 +124,7 @@ class FlowTracker:
                     "person",
                 )
                 for *xyxy, conf, cls in res.boxes.data.tolist()
-                if int(cls) == 0
+                if int(cls) == 0 and conf >= self.conf_thresh
             ]
             tracks = self.tracker.update_tracks(dets, frame=frame)
             now = time.time()
@@ -298,6 +298,7 @@ async def update_settings(request: Request):
     parse_num("v_thresh", int)
     parse_num("debounce", float)
     parse_num("retry_interval", int)
+    parse_num("conf_thresh", float)
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
     return templates.TemplateResponse("settings.html", {"request": request, "cfg": config, "saved": True})

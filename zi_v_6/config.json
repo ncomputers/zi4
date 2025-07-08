@@ -11,5 +11,6 @@
   "warn_threshold": 80,
   "redis_url": "redis://localhost:6379/0",
   "default_workers": -1,
-  "port": 5002
+  "port": 5002,
+  "conf_thresh": 0.3
 }
