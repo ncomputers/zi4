@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Crowd management system version 27."""
+"""Crowd management system version 28."""
 from __future__ import annotations
 
 import argparse

@@ -83,6 +83,15 @@ function initLive(){
 let maxCap={{max_capacity}};
 initChart(maxCap);
 initLive();
+const body=document.body;
+document.getElementById("darkToggle").addEventListener("click",()=>{
+  const d=body.classList.toggle("dark-mode");
+  localStorage.setItem("dark-mode",d);
+});
+if(localStorage.getItem("dark-mode")==="true"){
+  body.classList.add("dark-mode");
+}
+
 ws.onmessage=e=>{
   const d=JSON.parse(e.data);
   document.getElementById('in_count').textContent=d.in_count;
@@ -108,14 +117,7 @@ ws.onmessage=e=>{
     liveChart.data.datasets.forEach(ds=>ds.data.shift());
   }
   liveChart.update();
-  const body = document.body;
-  document.getElementById('darkToggle').addEventListener('click', () => {
-    const d = body.classList.toggle('dark-mode');
-    localStorage.setItem('dark-mode', d);
-  });
-  if (localStorage.getItem('dark-mode') === 'true') {
-    body.classList.add('dark-mode');
-  }
+};
 </script>
 </body>
 </html>
