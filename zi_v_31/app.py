@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Crowd management system version 32."""
+"""Crowd management system version 31."""
 from __future__ import annotations
 
 import argparse
@@ -368,17 +368,11 @@ class FlowTracker:
                     ])
             tracks = self.tracker.update_tracks(dets, frame=frame)
             now = time.time()
-            active_ids = set()
             for tr in tracks:
                 if not tr.is_confirmed():
                     continue
                 tid = tr.track_id
-                active_ids.add(tid)
                 x1, y1, x2, y2 = map(int, tr.to_ltrb())
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(w, x2), min(h, y2)
-                if x2 - x1 <= 0 or y2 - y1 <= 0:
-                    continue
                 cx = (x1 + x2) // 2
                 cy = (y1 + y2) // 2
                 if self.line_orientation == 'horizontal':
@@ -386,6 +380,15 @@ class FlowTracker:
                 else:
                     zone = 'left' if cx < line_pos else 'right'
                 label = getattr(tr, 'det_class', None)
+                anomaly_label = None
+                if label == 'person':
+                    crop = frame[y1:y2, x1:x2]
+                    pres = self.model_ppe.predict(crop, device=self.device, verbose=False)[0]
+                    for *pxyxy, pconf, pcls in pres.boxes.data.tolist():
+                        plabel = self.model_ppe.names[int(pcls)] if isinstance(self.model_ppe.names, dict) else self.model_ppe.names[int(pcls)]
+                        if pconf >= self.conf_thresh and plabel in self.ppe_classes:
+                            anomaly_label = plabel
+                            break
                 if tid not in self.tracks:
                     self.tracks[tid] = {
                         'zone': zone,
@@ -394,21 +397,14 @@ class FlowTracker:
                         'last': None,
                         'alerted': False,
                         'label': label,
-                        'best_conf': 0.0,
-                        'best_img': None,
+                        'anomaly': anomaly_label,
                     }
                 prev = self.tracks[tid]
-#<<<<<<< ftwijc-codex/create-full-crowd-management-system
-                conf = getattr(tr, 'det_conf', 0) or 0
-
-                if label == 'person' and conf > prev.get('best_conf', 0):
-                    crop = frame[y1:y2, x1:x2]
-                    if crop.size:
-                        prev['best_conf'] = conf
-                        prev['best_img'] = crop.copy()
                 if label is not None:
                     prev['label'] = label
-                if zone != prev['zone'] and abs(cx - prev['cx']) > self.v_thresh and now - prev['time'] > self.debounce:
+                if anomaly_label:
+                    prev['anomaly'] = anomaly_label
+                if zone != prev['zone'] and abs(cx-prev['cx']) > self.v_thresh and now-prev['time'] > self.debounce:
                     direction = None
                     if self.line_orientation == 'horizontal':
                         if prev['zone'] == 'top' and zone == 'bottom':
@@ -422,7 +418,7 @@ class FlowTracker:
                             direction = 'Exiting'
                     if direction and prev.get('label') in self.count_classes:
                         if prev['last'] is None:
-                            if direction == 'Entering':
+                            if direction=='Entering':
                                 self.in_count += 1
                             else:
                                 self.out_count += 1
@@ -430,7 +426,7 @@ class FlowTracker:
                             prev['last'] = direction
                             logger.info(f"{direction} ID{tid}: In={self.in_count} Out={self.out_count}")
                         elif prev['last'] != direction:
-                            if prev['last'] == 'Entering':
+                            if prev['last']=='Entering':
                                 self.in_count -= 1
                             else:
                                 self.out_count -= 1
@@ -439,26 +435,11 @@ class FlowTracker:
                             logger.info(f"Reversed flow for ID{tid}")
                         prev['time'] = now
                 prev['zone'], prev['cx'] = zone, cx
-                prev['last_seen'] = now
-                color = (0, 255, 0) if zone == 'right' else (0, 0, 255)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(frame, f"ID{tid}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-            # process tracks that have disappeared
-            gone_ids = [tid for tid in list(self.tracks.keys()) if tid not in active_ids]
-            for tid in gone_ids:
-                info = self.tracks.pop(tid)
-                img = info.get('best_img')
-                anomaly = None
-                if img is not None and img.size:
-                    pres = self.model_ppe.predict(img, device=self.device, verbose=False)[0]
-                    for *pxyxy, pconf, pcls in pres.boxes.data.tolist():
-                        plabel = self.model_ppe.names[int(pcls)] if isinstance(self.model_ppe.names, dict) else self.model_ppe.names[int(pcls)]
-                        if pconf >= self.conf_thresh and plabel in self.ppe_classes:
-                            anomaly = plabel
-                            break
-                if anomaly and anomaly in self.alert_anomalies and not info.get('alerted'):
-                    snap = img if img is not None else frame
+                label = getattr(tr, 'det_class', prev.get('label'))
+                anomaly = prev.get('anomaly')
+                if anomaly in self.alert_anomalies and not prev.get('alerted'):
+                    snap = frame.copy()
+                    cv2.rectangle(snap, (x1, y1), (x2, y2), (0, 0, 255), 2)
                     _, buf = cv2.imencode('.jpg', snap)
                     to_emails = config.get('email', {}).get('ppe_to', '')
                     recipients = [a.strip() for a in to_emails.split(',') if a.strip()]
@@ -467,12 +448,15 @@ class FlowTracker:
                         args=(f'PPE Alert: {anomaly}', f'Camera {self.cam_id} detected {anomaly}', recipients, buf.tobytes()),
                         daemon=True,
                     ).start()
-
-            cv2.putText(frame, f"Entering: {self.in_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, f"Exiting: {self.out_count}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    prev['alerted'] = True
+                color = (0,255,0) if zone=='right' else (0,0,255)
+                cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
+                cv2.putText(frame, f"ID{tid}", (x1,y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.putText(frame, f"Entering: {self.in_count}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+            cv2.putText(frame, f"Exiting: {self.out_count}", (10,70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
             with lock:
                 self.output_frame = frame.copy()
-            time.sleep(1 / self.fps)
+            time.sleep(1/self.fps)
 
 
 app = FastAPI()

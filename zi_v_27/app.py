@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Crowd management system version 32."""
+"""Crowd management system version 27."""
 from __future__ import annotations
 
 import argparse
@@ -23,7 +23,6 @@ from deep_sort_realtime.deepsort_tracker import DeepSort
 import redis
 import smtplib
 import uvicorn
-from email.message import EmailMessage
 import io
 import csv
 
@@ -33,29 +32,18 @@ TEMPLATE_DIR = BASE_DIR / "templates"
 lock = threading.Lock()
 
 # Object classes available for counting
-PPE_ITEMS = ["helmet", "glove", "shoes", "goggles", "mask"]
-ANOMALY_ITEMS = ["no_helmet", "no_glove", "no_shoes", "no_goggles", "no_mask"]
-COUNT_GROUPS = {
-    "person": ["person"],
-    "vehicle": ["car", "truck", "bus", "motorcycle", "bicycle"],
-    "animal": [
-        "bird",
-        "cat",
-        "dog",
-        "horse",
-        "sheep",
-        "cow",
-        "elephant",
-        "bear",
-        "zebra",
-        "giraffe",
-    ],
-}
-AVAILABLE_CLASSES = (
-    PPE_ITEMS
-    + ANOMALY_ITEMS
-    + [c for cl in COUNT_GROUPS.values() for c in cl]
-)
+AVAILABLE_CLASSES = [
+    "person",
+    "car",
+    "bus",
+    "truck",
+    "motorcycle",
+    "bicycle",
+    "dog",
+    "cat",
+]
+
+config: dict
 config_path: str
 redis_client: redis.Redis
 trackers: dict[int, FlowTracker] = {}
@@ -63,41 +51,15 @@ cameras: list
 last_status: str | None = None
 
 
-def sync_detection_classes(cfg: dict) -> None:
-    """Build class lists for object and PPE detection."""
-    object_classes: list[str] = []
-    count_classes: list[str] = []
-    for group in cfg.get("track_objects", ["person"]):
-        count_classes.extend(COUNT_GROUPS.get(group, [group]))
-    object_classes.extend(count_classes)
-    ppe_classes: list[str] = []
-    for item in cfg.get("track_ppe", []):
-        ppe_classes.append(item)
-        neg = f"no_{item}"
-        if neg in AVAILABLE_CLASSES:
-            ppe_classes.append(neg)
-    cfg["object_classes"] = object_classes
-    cfg["ppe_classes"] = ppe_classes
-    cfg["count_classes"] = count_classes
-
-
 def load_config(path: str, r: redis.Redis) -> dict:
     if os.path.exists(path):
         data = json.load(open(path))
-        data.setdefault("track_ppe", [])
-        data.setdefault("alert_anomalies", [])
-        data.setdefault("track_objects", ["person"])
-        data.setdefault("line_orientation", "vertical")
-        data.setdefault("person_model", "yolov8n.pt")
-        data.setdefault("ppe_model", "best_hlmt.pt")
-        sync_detection_classes(data)
         r.set("config", json.dumps(data))
         return data
     raise FileNotFoundError(path)
 
 
 def save_config(cfg: dict, path: str, r: redis.Redis) -> None:
-    sync_detection_classes(cfg)
     with open(path, "w") as f:
         json.dump(cfg, f, indent=2)
     r.set("config", json.dumps(cfg))
@@ -154,7 +116,7 @@ async def count_log_loop():
         await asyncio.sleep(60)
 
 
-def send_email(subject: str, message: str, to_list: list[str], image: bytes | None = None):
+def send_email(subject: str, message: str, to_list: list[str]):
     cfg = config.get("email", {})
     host = cfg.get("smtp_host")
     if not host:
@@ -164,20 +126,14 @@ def send_email(subject: str, message: str, to_list: list[str], image: bytes | No
         to_addrs += [a.strip() for a in cfg["cc"].split(',') if a.strip()]
     if cfg.get("bcc"):
         to_addrs += [a.strip() for a in cfg["bcc"].split(',') if a.strip()]
-    msg = EmailMessage()
-    msg["From"] = cfg.get("from_addr")
-    msg["To"] = ", ".join(to_addrs)
-    msg["Subject"] = subject
-    msg.set_content(message)
-    if image:
-        msg.add_attachment(image, maintype="image", subtype="jpeg", filename="alert.jpg")
+    msg = f"From: {cfg.get('from_addr')}\r\nTo: {', '.join(to_addrs)}\r\nSubject: {subject}\r\n\r\n{message}"
     try:
         with smtplib.SMTP(host, cfg.get("smtp_port", 587)) as s:
             if cfg.get("use_tls", True):
                 s.starttls()
             if cfg.get("smtp_user"):
                 s.login(cfg.get("smtp_user"), cfg.get("smtp_pass", ""))
-            s.send_message(msg)
+            s.sendmail(cfg.get("from_addr"), to_addrs, msg)
     except Exception as exc:
         logger.error("Email send failed: %s", exc)
 
@@ -227,7 +183,7 @@ def start_tracker(cam: dict) -> FlowTracker:
     tr = FlowTracker(
         cam["id"],
         cam["url"],
-        config.get("object_classes", ["person"]),
+        config.get("default_classes", ["person"]),
         config,
     )
     trackers[cam["id"]] = tr
@@ -252,17 +208,11 @@ class FlowTracker:
         self.cam_id = cam_id
         self.src = src
         self.classes = classes
-        self.count_classes = cfg.get("count_classes", [])
-        self.alert_anomalies = cfg.get("alert_anomalies", [])
-        self.line_orientation = cfg.get("line_orientation", "vertical")
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Loading person model {self.person_model} on {self.device}")
-        self.model_person = YOLO(self.person_model)
-        logger.info(f"Loading PPE model {self.ppe_model} on {self.device}")
-        self.model_ppe = YOLO(self.ppe_model)
+        logger.info(f"Loading model {self.model_path} on {self.device}")
+        self.model = YOLO(self.model_path)
         if self.device.startswith("cuda"):
-            self.model_person.model.to(self.device)
-            self.model_ppe.model.to(self.device)
+            self.model.model.to(self.device)
             torch.backends.cudnn.benchmark = True
         self.tracker = DeepSort(max_age=5)
         self.frame_queue = queue.Queue(maxsize=10)
@@ -290,24 +240,8 @@ class FlowTracker:
         for k, v in cfg.items():
             setattr(self, k, v)
         # update object classes if provided
-        if "object_classes" in cfg:
-            self.classes = cfg["object_classes"]
-        if "count_classes" in cfg:
-            self.count_classes = cfg["count_classes"]
-        if "alert_anomalies" in cfg:
-            self.alert_anomalies = cfg["alert_anomalies"]
-        if "line_orientation" in cfg:
-            self.line_orientation = cfg["line_orientation"]
-        if "person_model" in cfg and cfg["person_model"] != getattr(self, "person_model", None):
-            self.person_model = cfg["person_model"]
-            self.model_person = YOLO(self.person_model)
-            if self.device.startswith("cuda"):
-                self.model_person.model.to(self.device)
-        if "ppe_model" in cfg and cfg["ppe_model"] != getattr(self, "ppe_model", None):
-            self.ppe_model = cfg["ppe_model"]
-            self.model_ppe = YOLO(self.ppe_model)
-            if self.device.startswith("cuda"):
-                self.model_ppe.model.to(self.device)
+        if "default_classes" in cfg:
+            self.classes = cfg["default_classes"]
 
     def capture_loop(self):
         while self.running:
@@ -349,17 +283,13 @@ class FlowTracker:
                 logger.info("Daily counts reset")
             if self.skip_frames and idx % self.skip_frames:
                 continue
-            res = self.model_person.predict(frame, device=self.device, verbose=False)[0]
+            res = self.model.predict(frame, device=self.device, verbose=False)[0]
             h, w = frame.shape[:2]
-            if self.line_orientation == 'horizontal':
-                line_pos = int(h * self.line_ratio)
-                cv2.line(frame, (0, line_pos), (w, line_pos), (255, 0, 0), 2)
-            else:
-                line_pos = int(w * self.line_ratio)
-                cv2.line(frame, (line_pos, 0), (line_pos, h), (255, 0, 0), 2)
+            x_line = int(w * self.line_ratio)
+            cv2.line(frame, (x_line, 0), (x_line, h), (255, 0, 0), 2)
             dets = []
             for *xyxy, conf, cls in res.boxes.data.tolist():
-                label = self.model_person.names[int(cls)] if isinstance(self.model_person.names, dict) else self.model_person.names[int(cls)]
+                label = self.model.names[int(cls)] if isinstance(self.model.names, dict) else self.model.names[int(cls)]
                 if label in self.classes and conf >= self.conf_thresh:
                     dets.append([
                         [int(xyxy[0]), int(xyxy[1]), int(xyxy[2] - xyxy[0]), int(xyxy[3] - xyxy[1])],
@@ -368,61 +298,25 @@ class FlowTracker:
                     ])
             tracks = self.tracker.update_tracks(dets, frame=frame)
             now = time.time()
-            active_ids = set()
             for tr in tracks:
                 if not tr.is_confirmed():
                     continue
                 tid = tr.track_id
-                active_ids.add(tid)
                 x1, y1, x2, y2 = map(int, tr.to_ltrb())
-                x1, y1 = max(0, x1), max(0, y1)
-                x2, y2 = min(w, x2), min(h, y2)
-                if x2 - x1 <= 0 or y2 - y1 <= 0:
-                    continue
                 cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
-                if self.line_orientation == 'horizontal':
-                    zone = 'top' if cy < line_pos else 'bottom'
-                else:
-                    zone = 'left' if cx < line_pos else 'right'
-                label = getattr(tr, 'det_class', None)
+                zone = 'left' if cx < x_line else 'right'
                 if tid not in self.tracks:
-                    self.tracks[tid] = {
-                        'zone': zone,
-                        'cx': cx,
-                        'time': now,
-                        'last': None,
-                        'alerted': False,
-                        'label': label,
-                        'best_conf': 0.0,
-                        'best_img': None,
-                    }
+                    self.tracks[tid] = {'zone': zone, 'cx': cx, 'time': now, 'last': None}
                 prev = self.tracks[tid]
-#<<<<<<< ftwijc-codex/create-full-crowd-management-system
-                conf = getattr(tr, 'det_conf', 0) or 0
-
-                if label == 'person' and conf > prev.get('best_conf', 0):
-                    crop = frame[y1:y2, x1:x2]
-                    if crop.size:
-                        prev['best_conf'] = conf
-                        prev['best_img'] = crop.copy()
-                if label is not None:
-                    prev['label'] = label
-                if zone != prev['zone'] and abs(cx - prev['cx']) > self.v_thresh and now - prev['time'] > self.debounce:
+                if zone != prev['zone'] and abs(cx-prev['cx']) > self.v_thresh and now-prev['time'] > self.debounce:
                     direction = None
-                    if self.line_orientation == 'horizontal':
-                        if prev['zone'] == 'top' and zone == 'bottom':
-                            direction = 'Entering'
-                        elif prev['zone'] == 'bottom' and zone == 'top':
-                            direction = 'Exiting'
-                    else:
-                        if prev['zone'] == 'left' and zone == 'right':
-                            direction = 'Entering'
-                        elif prev['zone'] == 'right' and zone == 'left':
-                            direction = 'Exiting'
-                    if direction and prev.get('label') in self.count_classes:
+                    if prev['zone']=='left' and zone=='right':
+                        direction = 'Entering'
+                    elif prev['zone']=='right' and zone=='left':
+                        direction = 'Exiting'
+                    if direction:
                         if prev['last'] is None:
-                            if direction == 'Entering':
+                            if direction=='Entering':
                                 self.in_count += 1
                             else:
                                 self.out_count += 1
@@ -430,7 +324,7 @@ class FlowTracker:
                             prev['last'] = direction
                             logger.info(f"{direction} ID{tid}: In={self.in_count} Out={self.out_count}")
                         elif prev['last'] != direction:
-                            if prev['last'] == 'Entering':
+                            if prev['last']=='Entering':
                                 self.in_count -= 1
                             else:
                                 self.out_count -= 1
@@ -439,40 +333,14 @@ class FlowTracker:
                             logger.info(f"Reversed flow for ID{tid}")
                         prev['time'] = now
                 prev['zone'], prev['cx'] = zone, cx
-                prev['last_seen'] = now
-                color = (0, 255, 0) if zone == 'right' else (0, 0, 255)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(frame, f"ID{tid}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-
-            # process tracks that have disappeared
-            gone_ids = [tid for tid in list(self.tracks.keys()) if tid not in active_ids]
-            for tid in gone_ids:
-                info = self.tracks.pop(tid)
-                img = info.get('best_img')
-                anomaly = None
-                if img is not None and img.size:
-                    pres = self.model_ppe.predict(img, device=self.device, verbose=False)[0]
-                    for *pxyxy, pconf, pcls in pres.boxes.data.tolist():
-                        plabel = self.model_ppe.names[int(pcls)] if isinstance(self.model_ppe.names, dict) else self.model_ppe.names[int(pcls)]
-                        if pconf >= self.conf_thresh and plabel in self.ppe_classes:
-                            anomaly = plabel
-                            break
-                if anomaly and anomaly in self.alert_anomalies and not info.get('alerted'):
-                    snap = img if img is not None else frame
-                    _, buf = cv2.imencode('.jpg', snap)
-                    to_emails = config.get('email', {}).get('ppe_to', '')
-                    recipients = [a.strip() for a in to_emails.split(',') if a.strip()]
-                    threading.Thread(
-                        target=send_email,
-                        args=(f'PPE Alert: {anomaly}', f'Camera {self.cam_id} detected {anomaly}', recipients, buf.tobytes()),
-                        daemon=True,
-                    ).start()
-
-            cv2.putText(frame, f"Entering: {self.in_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, f"Exiting: {self.out_count}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                color = (0,255,0) if zone=='right' else (0,0,255)
+                cv2.rectangle(frame, (x1,y1), (x2,y2), color, 2)
+                cv2.putText(frame, f"ID{tid}", (x1,y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.putText(frame, f"Entering: {self.in_count}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+            cv2.putText(frame, f"Exiting: {self.out_count}", (10,70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
             with lock:
                 self.output_frame = frame.copy()
-            time.sleep(1 / self.fps)
+            time.sleep(1/self.fps)
 
 
 app = FastAPI()
@@ -549,13 +417,7 @@ async def ws_stats(ws: WebSocket):
 async def settings_page(request: Request):
     return templates.TemplateResponse(
         'settings.html',
-        {
-            'request': request,
-            'cfg': config,
-            'ppe_items': PPE_ITEMS,
-            'anomaly_items': ANOMALY_ITEMS,
-            'count_options': list(COUNT_GROUPS.keys()),
-        },
+        {'request': request, 'cfg': config, 'classes': AVAILABLE_CLASSES},
     )
 
 
@@ -573,8 +435,6 @@ async def update_settings(request: Request):
         'retry_interval',
         'conf_thresh',
         'reset_schedule',
-        'person_model',
-        'ppe_model',
     ]:
         if key in data:
             val = data[key]
@@ -582,14 +442,9 @@ async def update_settings(request: Request):
                 config[key] = val
             else:
                 config[key] = type(config.get(key, val))(val)
-    if 'track_ppe' in data and isinstance(data['track_ppe'], list):
-        config['track_ppe'] = data['track_ppe']
-    if 'alert_anomalies' in data and isinstance(data['alert_anomalies'], list):
-        config['alert_anomalies'] = data['alert_anomalies']
-    if 'track_objects' in data and isinstance(data['track_objects'], list):
-        config['track_objects'] = data['track_objects']
-    if 'line_orientation' in data:
-        config['line_orientation'] = data['line_orientation']
+    if 'default_classes' in data:
+        if isinstance(data['default_classes'], list):
+            config['default_classes'] = data['default_classes']
     save_config(config, config_path, redis_client)
     for tr in trackers.values():
         tr.update_cfg(config)
