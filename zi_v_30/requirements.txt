@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+redis
+opencv-python-headless
+torch
+ultralytics
+deep-sort-realtime
+loguru
+jinja2
+openpyxl
