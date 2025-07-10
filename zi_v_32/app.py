@@ -398,7 +398,9 @@ class FlowTracker:
                         'best_img': None,
                     }
                 prev = self.tracks[tid]
-                conf = getattr(tr, 'det_conf', 0)
+#<<<<<<< ftwijc-codex/create-full-crowd-management-system
+                conf = getattr(tr, 'det_conf', 0) or 0
+
                 if label == 'person' and conf > prev.get('best_conf', 0):
                     crop = frame[y1:y2, x1:x2]
                     if crop.size:
