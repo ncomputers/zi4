@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Crowd Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<h1>Crowd Dashboard</h1>
+<div id="status" class="status"></div>
+<img src="/video_feed" id="feed" alt="video">
+<div class="counts">
+    <span id="in_count"></span> entering<br>
+    <span id="out_count"></span> exiting
+</div>
+<script>
+    const ws = new WebSocket(`ws://${location.host}/ws/stats`);
+    ws.onmessage = (ev) => {
+        const data = JSON.parse(ev.data);
+        document.getElementById('in_count').textContent = data.in_count;
+        document.getElementById('out_count').textContent = data.out_count;
+        document.getElementById('status').className = data.status;
+    };
+</script>
+</body>
+</html>
