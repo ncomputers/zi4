@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Helmet Report</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="p-4">
+<div class="container">
+    <h1 class="mb-4">Helmet Report</h1>
+    <form id="rangeForm" class="row g-2 mb-3">
+        <div class="col-auto"><input type="datetime-local" id="start" class="form-control" required></div>
+        <div class="col-auto"><input type="datetime-local" id="end" class="form-control" required></div>
+        <div class="col-auto">
+            <select id="status" class="form-select">
+                <option value="">All</option>
+                <option value="no_helmet">No Helmet</option>
+                <option value="helmet">Helmet</option>
+            </select>
+        </div>
+        <div class="col-auto"><button type="submit" class="btn btn-primary">Load</button></div>
+        <div class="col-auto"><a id="exportLink" class="btn btn-success" href="#" download>Export</a></div>
+        <div class="col-auto"><a href="/" class="btn btn-secondary">Back</a></div>
+    </form>
+    <table class="table table-striped" id="logTable">
+        <thead><tr><th>Time</th><th>Camera</th><th>Track</th><th>Status</th><th>Conf</th><th>Image</th></tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+<script>
+async function loadData(){
+    const s=document.getElementById('start').value;
+    const e=document.getElementById('end').value;
+    const st=document.getElementById('status').value;
+    const r=await fetch(`/helmet_report_data?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&status=${encodeURIComponent(st)}`);
+    const d=await r.json();
+    const body=document.querySelector('#logTable tbody');
+    body.innerHTML='';
+    d.rows.forEach(row=>{
+        const tr=document.createElement('tr');
+        const img= row.image ? `<img src="${row.image}" width="80">` : '';
+        tr.innerHTML=`<td>${row.time}</td><td>${row.cam_id}</td><td>${row.track_id}</td><td>${row.status}</td><td>${row.conf.toFixed(2)}</td><td>${img}</td>`;
+        body.appendChild(tr);
+    });
+    const link=document.getElementById('exportLink');
+    link.href=`/helmet_report/export?start=${encodeURIComponent(s)}&end=${encodeURIComponent(e)}&status=${encodeURIComponent(st)}`;
+}
+ document.getElementById('rangeForm').addEventListener('submit',e=>{e.preventDefault();loadData();});
+</script>
+</body>
+</html>
