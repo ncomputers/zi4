@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cameras</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.2/dist/flatly/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="p-4">
+<div class="container">
+    <h1 class="mb-4">Cameras</h1>
+    <div id="msg"></div>
+    <form id="camForm" class="row g-3 mb-4">
+        <div class="col-md-3">
+            <input class="form-control" name="name" placeholder="Name" required>
+        </div>
+        <div class="col-md-2">
+            <select class="form-select" name="type">
+                <option value="http">HTTP</option>
+                <option value="rtsp">RTSP</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <input class="form-control" name="url" placeholder="URL" required>
+        </div>
+        <div class="col-md-4">
+            <select class="form-select" name="tasks" multiple>
+            {% for cls in model_classes %}
+                <option value="{{cls}}">{{cls.replace('_',' ').title()}}</option>
+            {% endfor %}
+            </select>
+        </div>
+        <div class="col-md-1">
+            <button class="btn btn-primary" type="submit">Add</button>
+        </div>
+    </form>
+    <table class="table table-bordered">
+        <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>URL</th><th>Tasks</th><th>Show</th><th>Actions</th></tr></thead>
+        <tbody id="camBody">
+        {% for c in cams %}
+        <tr data-id="{{c.id}}">
+            <td>{{c.id}}</td>
+            <td>{{c.name}}</td>
+            <td>{{c.type}}</td>
+            <td>{{c.url}}</td>
+            <td>
+                <select class="form-select form-select-sm tasks-select" data-id="{{c.id}}" multiple>
+                {% for cls in model_classes %}
+                    <option value="{{cls}}" {% if cls in c.tasks or cls==c.mode %}selected{% endif %}>{{cls.replace('_',' ').title()}}</option>
+                {% endfor %}
+                </select>
+            </td>
+            <td><input type="checkbox" class="form-check-input toggle" data-id="{{c.id}}" {% if c.enabled %}checked{% endif %}></td>
+            <td><button class="btn btn-success btn-sm save-btn" data-id="{{c.id}}">Save</button> <button class="btn btn-danger btn-sm delete-btn" data-id="{{c.id}}">Delete</button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <div class="mt-4">
+        <h5>Suggestions</h5>
+        <ul>
+            <li>Organize cameras by location for easier monitoring.</li>
+            <li>Add authentication to restrict camera management access.</li>
+        </ul>
+    </div>
+    <a href="/" class="btn btn-secondary">Back</a>
+</div>
+<script>
+const modelClasses = {{ model_classes | tojson }};
+const addRow=cam=>{
+  const tr=document.createElement('tr');
+  tr.dataset.id=cam.id;
+  const options = cls=>`<option value="${cls}" ${(cam.tasks&&cam.tasks.includes(cls))||(cam.mode===cls)?'selected':''}>${cls.replace('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}</option>`;
+  tr.innerHTML=`<td>${cam.id}</td>
+  <td>${cam.name}</td>
+  <td>${cam.type}</td>
+  <td>${cam.url}</td>
+  <td><select class="form-select form-select-sm tasks-select" data-id="${cam.id}" multiple>${modelClasses.map(options).join('')}</select></td>
+  <td><input type="checkbox" class="form-check-input toggle" data-id="${cam.id}" ${cam.enabled?'checked':''}></td>
+  <td><button class="btn btn-success btn-sm save-btn" data-id="${cam.id}">Save</button> <button class="btn btn-danger btn-sm delete-btn" data-id="${cam.id}">Delete</button></td>`;
+  document.getElementById('camBody').appendChild(tr);
+};
+
+document.getElementById('camForm').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const form=new FormData(e.target);
+  const obj=Object.fromEntries(form.entries());
+  obj.tasks=form.getAll('tasks');
+  obj.type=form.get('type');
+  const r=await fetch('/cameras',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)});
+  const d=await r.json();
+  if(d.added){
+    addRow(d.camera);
+    document.getElementById('msg').innerHTML='<div class="alert alert-success">Added</div>';
+    e.target.reset();
+  }else{
+    document.getElementById('msg').innerHTML='<div class="alert alert-danger">'+(d.error||'Error')+'</div>';
+  }
+});
+
+document.getElementById('camBody').addEventListener('click',async e=>{
+  if(e.target.classList.contains('delete-btn')){
+    const id=e.target.dataset.id;
+    const r=await fetch('/cameras/'+id,{method:'DELETE'});
+    const d=await r.json();
+    if(d.deleted){
+      e.target.closest('tr').remove();
+    }
+  }
+  if(e.target.classList.contains('toggle')){
+    const id=e.target.dataset.id;
+    const r=await fetch('/cameras/'+id,{method:'PATCH'});
+    const d=await r.json();
+    if(d.error){alert('Error');}
+  }
+  if(e.target.classList.contains('save-btn')){
+    const id=e.target.dataset.id;
+    const row=e.target.closest('tr');
+    const tasks=[...row.querySelector('.tasks-select').options].filter(o=>o.selected).map(o=>o.value);
+    await fetch('/cameras/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({tasks})});
+    document.getElementById('msg').innerHTML='<div class="alert alert-success">Saved</div>';
+  }
+});
+</script>
+</body>
+</html>
