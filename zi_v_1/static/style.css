@@ -1,0 +1,6 @@
+body { font-family: sans-serif; background: #fafafa; }
+h1 { color: #333; }
+.status.green { background: #0f0; width: 20px; height: 20px; }
+.status.yellow { background: #ff0; width: 20px; height: 20px; }
+.status.red { background: #f00; width: 20px; height: 20px; }
+.saved { color: green; }
