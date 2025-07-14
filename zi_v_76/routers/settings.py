@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from core.config import PPE_ITEMS, ANOMALY_ITEMS, COUNT_GROUPS, save_config
-from zi_v_75.config import config
+from config import config
 from modules.utils import require_roles
 from core.tracker_manager import (
     reset_counts,
@@ -74,7 +74,7 @@ async def update_settings(request: Request):
     if 'track_objects' in data and isinstance(data['track_objects'], list):
         cfg['track_objects'] = data['track_objects']
     save_config(cfg, cfg_path, redis)
-    from zi_v_75.config import set_config
+    from config import set_config
     set_config(cfg)
     for tr in trackers_map.values():
         tr.update_cfg(cfg)
@@ -101,7 +101,7 @@ async def import_settings(request: Request):
     cams_data = data.get('cameras')
     cfg.update(new_cfg)
     save_config(cfg, cfg_path, redis)
-    from zi_v_75.config import set_config
+    from config import set_config
     set_config(cfg)
     for tr in trackers_map.values():
         tr.update_cfg(cfg)

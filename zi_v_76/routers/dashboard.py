@@ -15,7 +15,7 @@ import asyncio
 from core.tracker_manager import handle_status_change
 from modules.utils import lock, require_roles
 from core.config import ANOMALY_ITEMS
-from zi_v_75.config import config
+from config import config
 
 router = APIRouter()
 

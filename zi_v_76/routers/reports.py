@@ -12,7 +12,7 @@ from fastapi import APIRouter, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse
 from modules.utils import require_roles
-from zi_v_75.config import config
+from config import config
 
 router = APIRouter()
 

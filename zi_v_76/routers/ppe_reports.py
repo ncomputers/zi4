@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 
 from modules.utils import send_email
 from core.config import ANOMALY_ITEMS
-from zi_v_75.config import config
+from config import config
 
 router = APIRouter()
 

@@ -10,7 +10,7 @@ import cv2
 
 from core.tracker_manager import start_tracker, stop_tracker, save_cameras
 from core.config import CAMERA_TASKS
-from zi_v_75.config import config
+from config import config
 
 router = APIRouter()
 

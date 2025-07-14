@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.status import HTTP_302_FOUND
 from modules.utils import verify_password
-from zi_v_75.config import config
+from config import config
 
 router = APIRouter()
 
