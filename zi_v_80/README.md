@@ -40,24 +40,6 @@ Launch the FastAPI application:
 python3 app.py
 ```
 Then open `http://localhost:5002` in your browser. Use the **Cameras** page to add streams (HTTP, RTSP or local webcams) and **Settings** to adjust options.
-Tests can be executed with `pytest`:
-```bash
-python3 -m pytest -q tests
-```
-
-## Testing Reports with Sample Data
-To quickly verify the report endpoints without real cameras you can insert a few
-records into Redis and call the APIs:
-
-```bash
-redis-cli ZADD history $(date +%s) '{"ts":$(date +%s),"in_person":1,"out_person":0}'
-redis-cli ZADD ppe_logs $(date +%s) '{"ts":$(date +%s),"cam_id":1,"track_id":2,"status":"no_helmet","conf":0.9,"color":"","path":"snap.jpg"}'
-curl "http://localhost:5002/report_data?start=$(date --iso-8601=seconds -d '-5 minutes')&end=$(date --iso-8601=seconds)&view=graph"
-curl "http://localhost:5002/ppe_report_data?start=$(date --iso-8601=seconds -d '-5 minutes')&end=$(date --iso-8601=seconds)&status=no_helmet"
-```
-
-These commands mirror the automated tests and should return JSON results similar
-to the values inserted.
 
 ## Directory Structure
 - `app.py` – FastAPI entry point.
@@ -66,5 +48,4 @@ to the values inserted.
 - `routers/` – API routes for dashboard, settings, reports, and cameras.
 - `templates/` – HTML templates rendered by FastAPI.
 - `public/` – Optional PHP pages.
-- `tests/` – Simple unit tests.
 
