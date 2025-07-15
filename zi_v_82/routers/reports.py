@@ -18,7 +18,7 @@ router = APIRouter()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-def init_context(config: dict, trackers: Dict[int, "FlowTracker"], redis_client, templates_path):
+def init_context(config: dict, trackers: Dict[int, "PersonTracker"], redis_client, templates_path):
     global cfg, trackers_map, redis, templates
     cfg = config
     trackers_map = trackers

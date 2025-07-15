@@ -21,7 +21,7 @@ router = APIRouter()
 
 def init_context(
     config: dict,
-    trackers: Dict[int, "FlowTracker"],
+    trackers: Dict[int, "PersonTracker"],
     cameras: List[dict],
     redis_client,
     templates_path: str,
@@ -113,7 +113,7 @@ async def import_settings(request: Request):
         save_cameras(cams, redis)
         for cam in cams:
             if cam.get('enabled', True):
-                start_tracker(cam, cfg, trackers_map)
+                start_tracker(cam, cfg, trackers_map, redis)
     return {'saved': True}
 
 @router.post('/reset')

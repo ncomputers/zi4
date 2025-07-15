@@ -69,8 +69,20 @@
             <td>{% if c.online %}<span class="badge bg-success">Online</span>{% else %}<span class="badge bg-danger">Offline</span>{% endif %}</td>
             <td>
                 {% for cls in model_classes %}
+                {% set checked = false %}
+                {% if c.tasks is mapping %}
+                    {% if cls == 'in_count' %}
+                        {% set checked = 'in' in c.tasks.get('counting', []) %}
+                    {% elif cls == 'out_count' %}
+                        {% set checked = 'out' in c.tasks.get('counting', []) %}
+                    {% else %}
+                        {% set checked = cls in c.tasks.get('ppe', []) %}
+                    {% endif %}
+                {% else %}
+                    {% set checked = cls in c.tasks %}
+                {% endif %}
                 <div class="form-check form-check-inline">
-                    <input class="form-check-input task-check" type="checkbox" value="{{cls}}" {% if cls in c.tasks %}checked{% endif %}>
+                    <input class="form-check-input task-check" type="checkbox" value="{{cls}}" {% if checked %}checked{% endif %}>
                     <label class="form-check-label">{{cls.replace('_',' ').title()}}</label>
                 </div>
                 {% endfor %}
@@ -117,10 +129,17 @@
 </div>
 <script>
 const modelClasses = {{ model_classes | tojson }};
+function isChecked(cam, cls){
+  if(!cam.tasks) return false;
+  if(Array.isArray(cam.tasks)) return cam.tasks.includes(cls);
+  if(cls==='in_count') return cam.tasks.counting&&cam.tasks.counting.includes('in');
+  if(cls==='out_count') return cam.tasks.counting&&cam.tasks.counting.includes('out');
+  return cam.tasks.ppe&&cam.tasks.ppe.includes(cls);
+}
 const addRow=cam=>{
   const tr=document.createElement('tr');
   tr.dataset.id=cam.id;
-  const taskChecks=modelClasses.map(cls=>`<div class="form-check form-check-inline"><input class="form-check-input task-check" type="checkbox" value="${cls}" ${cam.tasks&&cam.tasks.includes(cls)?'checked':''}><label class="form-check-label">${cls.replace('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}</label></div>`).join('');
+  const taskChecks=modelClasses.map(cls=>`<div class="form-check form-check-inline"><input class="form-check-input task-check" type="checkbox" value="${cls}" ${isChecked(cam,cls)?'checked':''}><label class="form-check-label">${cls.replace('_',' ').replace(/\b\w/g,c=>c.toUpperCase())}</label></div>`).join('');
   tr.innerHTML=`<td>${cam.id}</td>
   <td>${cam.name}</td>
   <td>${cam.type}</td>

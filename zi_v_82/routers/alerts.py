@@ -13,7 +13,7 @@ from config import config
 
 router = APIRouter()
 
-def init_context(config: dict, trackers: Dict[int, "FlowTracker"], redis_client, templates_path, config_path: str):
+def init_context(config: dict, trackers: Dict[int, "PersonTracker"], redis_client, templates_path, config_path: str):
     global cfg, trackers_map, redis, templates, cfg_path
     cfg = config
     trackers_map = trackers

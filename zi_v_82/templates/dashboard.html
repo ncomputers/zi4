@@ -116,7 +116,7 @@
     {% endif %}
 </div>
 <script>
-const ws=new WebSocket(`ws://${location.host}/ws/stats`);
+const evt=new EventSource(`/sse/stats`);
 let chart;
 let liveChart;
 function initChart(maxCap){
@@ -147,7 +147,7 @@ if(localStorage.getItem("dark-mode")==="true"){
   body.classList.add("dark-mode");
 }
 
-ws.onmessage=e=>{
+evt.onmessage=e=>{
   const d=JSON.parse(e.data);
   document.getElementById('in_count').textContent=d.in_count;
   document.getElementById('out_count').textContent=d.out_count;
