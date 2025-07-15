@@ -19,7 +19,7 @@ from config import config
 
 router = APIRouter()
 
-def init_context(config: dict, trackers: Dict[int, "FlowTracker"], cameras: list, redis_client):
+def init_context(config: dict, trackers: Dict[int, "PersonTracker"], cameras: list, redis_client):
     global cfg, trackers_map, cams, templates, redis
     cfg = config
     trackers_map = trackers

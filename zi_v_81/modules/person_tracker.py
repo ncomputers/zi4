@@ -15,11 +15,11 @@ from .utils import send_email, lock, SNAP_DIR
 from .duplicate_filter import DuplicateFilter
 from core.config import ANOMALY_ITEMS, COUNT_GROUPS
 
-class FlowTracker:
+class PersonTracker:
     """Tracks entry and exit counts using YOLOv8 and DeepSORT."""
 
     def __init__(self, cam_id: int, src: str, classes: list[str], cfg: dict,
-                 tasks: list[str] | None = None,
+                 tasks: dict | None = None,
                  src_type: str = "http", line_orientation: str | None = None,
                  reverse: bool = False, resolution: str = "original"):
         self.cfg = cfg
@@ -29,7 +29,7 @@ class FlowTracker:
         self.src = src
         self.src_type = src_type
         self.classes = classes
-        self.tasks = tasks or []
+        self.tasks = tasks or {"counting": ["in", "out"], "ppe": []}
         self.count_classes = cfg.get("count_classes", [])
         self.ppe_classes = cfg.get("ppe_classes", [])
         self.alert_anomalies = cfg.get("alert_anomalies", [])
@@ -59,16 +59,12 @@ class FlowTracker:
             self.device = "cpu"
         logger.info(f"Loading person model {self.person_model} on {self.device}")
         self.model_person = YOLO(self.person_model)
-        logger.info(f"Loading PPE model {self.ppe_model} on {self.device}")
-        self.model_ppe = YOLO(self.ppe_model)
         self.email_cfg = cfg.get("email", {})
         if self.device.startswith("cuda"):
             self.model_person.model.to(self.device).half()
-            self.model_ppe.model.to(self.device).half()
             torch.backends.cudnn.benchmark = True
         else:
             self.model_person.model.to(self.device)
-            self.model_ppe.model.to(self.device)
         self.tracker = DeepSort(max_age=5)
         self.frame_queue = queue.Queue(maxsize=10)
         self.tracks = {}
@@ -163,122 +159,7 @@ class FlowTracker:
                 self.model_person.model.to(self.device).half()
         if "email" in cfg:
             self.email_cfg = cfg["email"]
-        if "ppe_model" in cfg and cfg["ppe_model"] != getattr(self, "ppe_model", None):
-            self.ppe_model = cfg["ppe_model"]
-            self.model_ppe = YOLO(self.ppe_model)
-            if self.device.startswith("cuda"):
-                self.model_ppe.model.to(self.device).half()
 
-    def _color_name(self, bgr):
-        import numpy as np
-        hsv = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0][0]
-        h, s, v = hsv
-        if v < 50:
-            return 'black'
-        if s < 40:
-            return 'white'
-        if h < 15 or h >= 165:
-            return 'red'
-        if h < 45:
-            return 'yellow'
-        if h < 85:
-            return 'green'
-        if h < 125:
-            return 'blue'
-        if h < 165:
-            return 'purple'
-        return 'unknown'
-
-    def check_helmet(self, img):
-        """Return ('helmet' or 'no_helmet', confidence, color)."""
-        res = self.model_ppe.predict(img, device=self.device, verbose=False)[0]
-        helmet_boxes = []
-        head_boxes = []
-        for *xyxy, conf, cls in res.boxes.data.tolist():
-            raw = (
-                self.model_ppe.names[int(cls)]
-                if isinstance(self.model_ppe.names, dict)
-                else self.model_ppe.names[int(cls)]
-            )
-            label = self._clean_label(raw)
-            x1, y1, x2, y2 = map(int, xyxy)
-            if label == "helmet":
-                helmet_boxes.append((x1, y1, x2, y2, conf))
-            elif label == "head":
-                head_boxes.append((x1, y1, x2, y2, conf))
-        status = None
-        best = 0.0
-        for x1, y1, x2, y2, conf in head_boxes:
-            covered = False
-            for hx1, hy1, hx2, hy2, _ in helmet_boxes:
-                if not (hx2 < x1 or hx1 > x2 or hy2 < y1 or hy1 > y2):
-                    covered = True
-                    break
-            if not covered and conf > best:
-                status = "no_helmet"
-                best = conf
-        color = None
-        if status is None and helmet_boxes:
-            status = "helmet"
-            best_box = max(helmet_boxes, key=lambda b: b[-1])
-            best = best_box[-1]
-            if self.detect_helmet_color:
-                hx1, hy1, hx2, hy2, _ = best_box
-                crop = img[hy1:hy2, hx1:hx2]
-                if crop.size:
-                    bgr = tuple(int(x) for x in crop.mean(axis=(0,1)))
-                    color = self._color_name(bgr)
-        return status, best, color
-
-    def check_ppe(self, img) -> dict:
-        """Return detection results for configured tasks."""
-        res = self.model_ppe.predict(img, device=self.device, verbose=False)[0]
-        results = {}
-        scores = {}
-        boxes = {}
-        for *xyxy, conf, cls in res.boxes.data.tolist():
-            raw = (
-                self.model_ppe.names[int(cls)]
-                if isinstance(self.model_ppe.names, dict)
-                else self.model_ppe.names[int(cls)]
-            )
-            label = self._clean_label(raw)
-            if conf > scores.get(label, 0):
-                scores[label] = conf
-                boxes[label] = [int(v) for v in xyxy]
-        # helmet special case
-        if 'helmet' in self.tasks:
-            helmet_conf = scores.get('helmet', 0)
-            head_conf = scores.get('head', 0)
-            color = None
-            if helmet_conf and (helmet_conf >= head_conf):
-                status = 'helmet'
-                conf = helmet_conf
-                if self.detect_helmet_color and 'helmet' in boxes:
-                    hx1, hy1, hx2, hy2 = boxes['helmet']
-                    crop = img[hy1:hy2, hx1:hx2]
-                    if crop.size:
-                        bgr = tuple(int(x) for x in crop.mean(axis=(0,1)))
-                        color = self._color_name(bgr)
-            elif head_conf:
-                status = 'no_helmet'
-                conf = head_conf
-            else:
-                status = None
-                conf = 0
-            if status:
-                results['helmet'] = (status, conf, color)
-        for item in self.tasks:
-            if item == 'helmet':
-                continue
-            conf = scores.get(item, 0)
-            if conf == 0:
-                continue
-            if conf >= self.helmet_conf_thresh:
-                results[item] = (item, conf, None)
-            else:
-                results[item] = (f'no_{item}', conf, None)
-        return results
 
     def _open_capture(self):
         """Return a capture object or FFmpeg process stdout for RTSP streams."""
@@ -595,14 +476,6 @@ class FlowTracker:
                 random.shuffle(candidates)
                 images.extend(candidates[:4])
                 label = info.get('label')
-                results = {}
-                if self.tasks and label in COUNT_GROUPS.get('person', []):
-                    img_for_ppe = best_img if best_img is not None else frame
-                    results = self.check_ppe(img_for_ppe)
-                    for item, (st, conf, col) in results.items():
-                        logger.info(
-                            f"PPE check {item} ID{tid}: {st} conf={conf:.2f}"
-                        )
                 if label in COUNT_GROUPS.get('vehicle', []):
                     ts = int(time.time())
                     snap = best_img if best_img is not None else frame
@@ -664,47 +537,7 @@ class FlowTracker:
                             )
                             info['direction'] = direction
                             info['cross_time'] = now
-                if self.track_misc and self.tasks and not results and label not in COUNT_GROUPS.get('vehicle', []):
-                    ts = int(time.time())
-                    snap = best_img if best_img is not None else frame
-                    fname = f"{self.cam_id}_{tid}_misc_{ts}.jpg"
-                    path = self.snap_dir / fname
-                    cv2.imwrite(str(path), snap)
-                    entry = {
-                        'ts': ts,
-                        'cam_id': self.cam_id,
-                        'track_id': tid,
-                        'status': 'misc',
-                        'conf': 0,
-                        'color': None,
-                        'path': fname,
-                    }
-                    self.redis.zadd('ppe_logs', {json.dumps(entry): ts})
-                    limit = self.cfg.get('ppe_log_limit', 1000)
-                    self.redis.zremrangebyrank('ppe_logs', 0, -limit-1)
-                for item, res in results.items():
-                    st, conf, col = res
-                    if not st or conf < self.helmet_conf_thresh:
-                        continue
-                    ts = int(time.time())
-                    snap = best_img if best_img is not None else frame
-                    fname = f"{self.cam_id}_{tid}_{st}_{int(conf*100)}_{ts}.jpg"
-                    path = self.snap_dir / fname
-                    cv2.imwrite(str(path), snap)
-                    entry = {
-                        'ts': ts,
-                        'cam_id': self.cam_id,
-                        'track_id': tid,
-                        'status': st,
-                        'conf': conf,
-                        'color': col,
-                        'path': fname,
-                    }
-                    self.redis.zadd('ppe_logs', {json.dumps(entry): ts})
-                    limit = self.cfg.get('ppe_log_limit', 1000)
-                    self.redis.zremrangebyrank('ppe_logs', 0, -limit-1)
-                    if st.startswith('no_'):
-                        self.redis.incr(f'{st}_count')
+
 
                 if label in COUNT_GROUPS.get('person', []):
                     ct = info.get('cross_time')
@@ -720,8 +553,8 @@ class FlowTracker:
                             'cam_id': self.cam_id,
                             'track_id': tid,
                             'direction': direction,
-                            'ppe': results,
                             'path': str(path),
+                            'needs_ppe': bool(self.tasks.get('ppe'))
                         }
                         self.redis.zadd('person_logs', {json.dumps(entry): cross_ts})
                         limit = self.cfg.get('ppe_log_limit', 1000)

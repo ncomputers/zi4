@@ -14,7 +14,7 @@ from config import config
 
 router = APIRouter()
 
-def init_context(config: dict, cameras: List[dict], trackers: Dict[int, "FlowTracker"], redis_client, templates_path):
+def init_context(config: dict, cameras: List[dict], trackers: Dict[int, "PersonTracker"], redis_client, templates_path):
     global cfg, cams, trackers_map, redis, templates
     cfg = config
     cams = cameras
@@ -49,12 +49,22 @@ async def add_camera(request: Request):
     name = data.get('name') or f"Camera{len(cams)+1}"
     url = data.get('url')
     src_type = data.get('type', 'http')
-    tasks = data.get('tasks', [])
+    tasks = data.get('tasks', {})
     reverse = bool(data.get('reverse'))
     orientation = data.get('line_orientation', 'vertical')
     resolution = data.get('resolution', 'original')
-    if not isinstance(tasks, list):
-        tasks = []
+    if isinstance(tasks, list):
+        cnt, ppe = [], []
+        for t in tasks:
+            if t == 'in_count':
+                cnt.append('in')
+            elif t == 'out_count':
+                cnt.append('out')
+            else:
+                ppe.append(t)
+        tasks = {'counting': cnt, 'ppe': ppe}
+    if not isinstance(tasks, dict):
+        tasks = {'counting': ['in', 'out'], 'ppe': []}
     if not url:
         return {'error': 'Missing URL'}
     cam_id = max([c['id'] for c in cams], default=0) + 1
@@ -107,8 +117,20 @@ async def update_camera(cam_id: int, request: Request):
     data = await request.json()
     for cam in cams:
         if cam['id'] == cam_id:
-            if 'tasks' in data and isinstance(data['tasks'], list):
-                cam['tasks'] = data['tasks']
+            if 'tasks' in data:
+                tasks_upd = data['tasks']
+                if isinstance(tasks_upd, list):
+                    cnt, ppe = [], []
+                    for t in tasks_upd:
+                        if t == 'in_count':
+                            cnt.append('in')
+                        elif t == 'out_count':
+                            cnt.append('out')
+                        else:
+                            ppe.append(t)
+                    tasks_upd = {'counting': cnt, 'ppe': ppe}
+                if isinstance(tasks_upd, dict):
+                    cam['tasks'] = tasks_upd
             if 'url' in data:
                 cam['url'] = data['url']
             if 'type' in data:

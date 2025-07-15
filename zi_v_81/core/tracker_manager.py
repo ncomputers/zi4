@@ -1,4 +1,4 @@
-"""Manage FlowTracker instances and related counters."""
+"""Manage PersonTracker instances and related counters."""
 from __future__ import annotations
 import json
 import time
@@ -11,7 +11,7 @@ import redis
 from loguru import logger
 
 from .config import load_config, save_config, COUNT_GROUPS
-from modules.tracker import FlowTracker
+from modules.person_tracker import PersonTracker
 
 lock = threading.Lock()
 
@@ -22,7 +22,18 @@ def load_cameras(r: redis.Redis, default_url: str) -> List[dict]:
         try:
             cams = json.loads(data)
             for cam in cams:
-                cam.setdefault("tasks", ["in_count", "out_count"]) 
+                if isinstance(cam.get("tasks"), list):
+                    cnt = []
+                    ppe = []
+                    for t in cam["tasks"]:
+                        if t == "in_count":
+                            cnt.append("in")
+                        elif t == "out_count":
+                            cnt.append("out")
+                        else:
+                            ppe.append(t)
+                    cam["tasks"] = {"counting": cnt or ["in", "out"], "ppe": ppe}
+                cam.setdefault("tasks", {"counting": ["in", "out"], "ppe": []})
                 cam.pop("mode", None)
                 cam.setdefault("type", "http")
                 cam.setdefault("reverse", False)
@@ -39,7 +50,7 @@ def load_cameras(r: redis.Redis, default_url: str) -> List[dict]:
             "id": 1,
             "name": "Camera1",
             "url": default_url,
-            "tasks": ["in_count", "out_count"],
+            "tasks": {"counting": ["in", "out"], "ppe": []},
             "enabled": True,
             "type": "http",
             "reverse": False,
@@ -55,9 +66,9 @@ def save_cameras(cams: List[dict], r: redis.Redis) -> None:
     r.set("cameras", json.dumps(cams))
 
 
-def start_tracker(cam: dict, cfg: dict, trackers: Dict[int, FlowTracker]) -> FlowTracker:
-    tasks = cam.get("tasks", [])
-    tr = FlowTracker(
+def start_tracker(cam: dict, cfg: dict, trackers: Dict[int, PersonTracker]) -> PersonTracker:
+    tasks = cam.get("tasks", {"counting": ["in", "out"], "ppe": []})
+    tr = PersonTracker(
         cam["id"],
         cam["url"],
         cfg.get("object_classes", ["person"]),
@@ -74,13 +85,13 @@ def start_tracker(cam: dict, cfg: dict, trackers: Dict[int, FlowTracker]) -> Flo
     return tr
 
 
-def stop_tracker(cam_id: int, trackers: Dict[int, FlowTracker]) -> None:
+def stop_tracker(cam_id: int, trackers: Dict[int, PersonTracker]) -> None:
     tr = trackers.pop(cam_id, None)
     if tr:
         tr.running = False
 
 
-def reset_counts(trackers: Dict[int, FlowTracker]) -> None:
+def reset_counts(trackers: Dict[int, PersonTracker]) -> None:
     for tr in trackers.values():
         tr.in_count = 0
         tr.out_count = 0
@@ -96,7 +107,7 @@ def reset_nohelmet(r: redis.Redis) -> None:
     logger.info("No-helmet counter reset")
 
 
-def log_counts(r: redis.Redis, trackers: Dict[int, FlowTracker]) -> None:
+def log_counts(r: redis.Redis, trackers: Dict[int, PersonTracker]) -> None:
     ts = int(time.time())
     data = {"ts": ts}
     for g in COUNT_GROUPS.keys():
@@ -109,7 +120,7 @@ def log_counts(r: redis.Redis, trackers: Dict[int, FlowTracker]) -> None:
     r.zremrangebyrank("history", 0, -10001)
 
 
-async def count_log_loop(r: redis.Redis, trackers: Dict[int, FlowTracker]):
+async def count_log_loop(r: redis.Redis, trackers: Dict[int, PersonTracker]):
     while True:
         log_counts(r, trackers)
         await asyncio.sleep(60)

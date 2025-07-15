@@ -21,7 +21,7 @@ router = APIRouter()
 
 def init_context(
     config: dict,
-    trackers: Dict[int, "FlowTracker"],
+    trackers: Dict[int, "PersonTracker"],
     cameras: List[dict],
     redis_client,
     templates_path: str,
