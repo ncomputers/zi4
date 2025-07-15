@@ -32,8 +32,9 @@ from core.tracker_manager import (
     start_tracker,
     count_log_loop,
 )
-from modules.tracker import FlowTracker
+from modules.person_tracker import PersonTracker
 from modules.alerts import AlertWorker
+from modules.ppe_worker import PPEDetector
 from modules.utils import lock, SNAP_DIR
 from config import set_config, config as shared_config
 
@@ -53,7 +54,8 @@ config_path: str
 redis_client: redis.Redis
 cameras: list
 a = []
-trackers: dict[int, FlowTracker] = {}
+trackers: dict[int, PersonTracker] = {}
+ppe_worker: PPEDetector | None = None
 alert_worker: AlertWorker | None = None
 
 # Routers
@@ -96,9 +98,11 @@ def init_app():
         if cam.get("enabled", True):
             start_tracker(cam, cfg, trackers)
     alert_worker = AlertWorker(cfg, cfg["redis_url"], BASE_DIR)
+    ppe_worker = PPEDetector(cfg, cfg["redis_url"], SNAP_DIR)
+    ppe_worker.start()
 
     # set globals
-    globals().update(config=cfg, config_path=config_path_local, redis_client=redis_client_local, cameras=cams)
+    globals().update(config=cfg, config_path=config_path_local, redis_client=redis_client_local, cameras=cams, ppe_worker=ppe_worker)
 
     # routers init
     dashboard.init_context(cfg, trackers, cams, redis_client_local)
