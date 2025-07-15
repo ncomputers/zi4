@@ -19,7 +19,7 @@ from config import config
 
 router = APIRouter()
 
-def init_context(config: dict, trackers: Dict[int, "FlowTracker"], cameras: list, redis_client):
+def init_context(config: dict, trackers: Dict[int, "PersonTracker"], cameras: list, redis_client):
     global cfg, trackers_map, cams, templates, redis
     cfg = config
     trackers_map = trackers
@@ -102,6 +102,22 @@ async def ws_stats(ws: WebSocket):
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         pass
+
+@router.get('/sse/stats')
+async def sse_stats():
+    async def event_gen():
+        pubsub = redis.pubsub()
+        pubsub.subscribe('stats_updates')
+        try:
+            while True:
+                msg = pubsub.get_message(ignore_subscribe_messages=True, timeout=10)
+                if msg:
+                    data = msg['data'].decode()
+                    yield f"data: {data}\n\n"
+                await asyncio.sleep(0.5)
+        finally:
+            pubsub.close()
+    return StreamingResponse(event_gen(), media_type='text/event-stream')
 
 @router.get('/latest_images')
 async def latest_images(status: str = 'no_helmet', count: int = 5):

@@ -1,10 +1,17 @@
-# Crowd Management System v78
+# Crowd Management System v81
 
-This version provides person and PPE detection with optional duplicate frame removal.  For RTSP sources the tracker can launch FFmpeg with the `mpdecimate` filter to discard duplicate frames before they reach Python.  For non‑RTSP sources a perceptual hashing filter skips near‑identical frames to reduce GPU/CPU load. The application is built with FastAPI and can ingest HTTP, RTSP, or local camera streams. Results are stored in Redis and a simple PHP frontend displays reports. Camera tasks now combine counting directions and PPE options, and line orientation is configured per camera.
+Version 81 separates the person counting and PPE detection logic into two
+independent modules.  The basic **PersonTracker** detects and tracks people and
+logs entry/exit events to `person_logs`.  A new **PPEDetector** reads those log
+entries that require PPE checks and stores the results in `ppe_logs`.  Camera
+configuration now uses grouped tasks for counting and PPE detection.
+
+Duplicate frame removal and all other features from the previous release are
+still available.
 
 ## Features
 - **Multiple camera sources**: Add HTTP or RTSP cameras via the settings page.
-- **Object detection**: Uses YOLOv8 models for person and PPE detection. CUDA is used when available.
+- **Person counting and PPE checks**: YOLOv8 is used for person detection and, when enabled, for verifying required PPE.
 - **Counting and alerts**: Tracks entries/exits and can send email alerts based on customizable rules.
 - **Duplicate frame filter**: Skips nearly identical frames to reduce GPU/CPU load.
 - **Dashboard and reports**: Live counts, recent anomalies, and historical reports are available in the web interface.
